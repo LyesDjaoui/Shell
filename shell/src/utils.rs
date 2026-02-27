@@ -30,3 +30,21 @@ pub fn write_in_file(path: &str, text: &str , append : bool) -> std::io::Result<
     file.write_all(text.as_bytes())?;
     Ok(())
 }
+
+pub fn get_all_executables() -> Vec<String> {
+    let mut executables = Vec::new();
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_file() || file_type.is_symlink() {
+                             executables.push(entry.file_name().to_string_lossy().into_owned());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    executables
+}
