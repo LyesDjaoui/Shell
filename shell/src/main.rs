@@ -1,13 +1,11 @@
 mod utils;
 mod commands;
 mod exec;
-use std::io::{self, Write};
 use crate::exec::execute_command;
 mod completer;
 use crate::completer::ShellCompleter;
 use rustyline::Editor;
 use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
 
 
 fn main() -> rustyline::Result<()> {
