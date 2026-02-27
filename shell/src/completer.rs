@@ -51,35 +51,47 @@ impl ShellCompleter {
 impl Completer for ShellCompleter {
     type Candidate = String;
 
-    fn complete(&self,line: &str,pos: usize,_ctx: &rustyline::Context<'_>,) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
+    fn complete(&self, line: &str, pos: usize, _ctx: &rustyline::Context<'_>) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
         let (start_index, suggestions) = self.get_suggestions(line, pos, _ctx)?;
 
-        if suggestions.len() <= 1 {
-            let completions = suggestions.iter().map(|s| format!("{} ", s)).collect();
-            return Ok((start_index, completions));
+        if suggestions.is_empty() {
+            return Ok((pos, vec![]));
+        }
+
+        let word_to_complete = &line[start_index..pos];
+        let lcp = utils::longest_common_prefix(&suggestions);
+
+        if lcp.len() > word_to_complete.len() {
+            let mut completion = lcp;
+            
+            if suggestions.len() == 1 {
+                completion.push(' ');
+            }
+            
+            *self.tab_count.borrow_mut() = 0;
+            return Ok((start_index, vec![completion]));
         }
 
         let current_line = line[..pos].to_string();
-        let same_line = *self.last_line.borrow() == current_line;
+        let is_same_request = *self.last_line.borrow() == current_line;
 
-        if same_line {
+        if is_same_request {
             *self.tab_count.borrow_mut() += 1;
         } else {
             *self.tab_count.borrow_mut() = 1;
             *self.last_line.borrow_mut() = current_line;
         }
 
-        let count = *self.tab_count.borrow();
-
-        if count == 1 {
+        if *self.tab_count.borrow() == 1 {
             print!("\x07");
-            Ok((start_index, vec![]))
+            io::stdout().flush().unwrap();
+            Ok((pos, vec![]))
         } else {
             *self.tab_count.borrow_mut() = 0;
             println!("\n{}", suggestions.join("  "));
             print!("$ {}", line);
             io::stdout().flush().unwrap();
-            Ok((start_index, vec![]))
+            Ok((pos, vec![]))
         }
     }
 }
