@@ -74,3 +74,32 @@ pub fn handle_echo(args: &[String], output_file: Option<String> , append: bool) 
         Some(output)
     }
 }
+
+pub fn handle_pipe(left_cmd: &[String], right_cmd: &[String]) -> Option<String> {
+    if left_cmd.is_empty() || right_cmd.is_empty() {
+        return None;
+    }
+
+    let left_exe = find_executable(&left_cmd[0])?;
+    let right_exe = find_executable(&right_cmd[0])?;
+
+    let mut left_child = Command::new(left_exe)
+        .args(&left_cmd[1..])
+        .stdout(Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    let left_stdout = left_child.stdout.take()?;
+
+    let mut right_child = Command::new(right_exe)
+        .args(&right_cmd[1..])
+        .stdin(Stdio::from(left_stdout))
+        .stdout(Stdio::inherit())
+        .spawn()
+        .ok()?;
+
+    let _ = left_child.wait();
+    let _ = right_child.wait();
+
+    None
+}

@@ -8,6 +8,7 @@ pub fn execute_command(args: &[String]) -> Option<String> {
     let mut clean_args: Vec<String> = Vec::new();
     let mut i = 0;
 
+
     while i < args.len() {
         if args[i] == ">" || args[i] == "1>" || args[i] == "2>" || args[i] == ">>" || args[i] == "1>>" || args[i] == "2>>" {
             op = args[i].clone();
@@ -15,6 +16,10 @@ pub fn execute_command(args: &[String]) -> Option<String> {
                 output_file = Some(args[i + 1].clone());
                 i += 2;
             }
+        } else if args[i] == "|" {
+                let left_cmd = args[..i].to_vec();
+                let right_cmd = args[i+1..].to_vec();
+                return commands::handle_pipe(&left_cmd, &right_cmd);
         } else {
             clean_args.push(args[i].clone());
             i += 1;
