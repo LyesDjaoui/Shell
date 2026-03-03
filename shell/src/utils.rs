@@ -60,3 +60,7 @@ pub fn longest_common_prefix(strs: &[String]) -> String {
     }
     prefix
 }
+
+pub fn is_builtin_command(cmd: &str) -> bool {
+    matches!(cmd, "exit" | "echo" | "type")
+}

@@ -1,7 +1,10 @@
 use std::process::{Command, Stdio};
-use crate::utils;
 use crate::utils::find_executable;
+use crate::utils::is_builtin_command;
 use std::fs::OpenOptions;
+use std::io::Write;
+use std::os::unix::io::FromRawFd;
+use std::fs::File;
 
 pub fn handle_external_command(args: &[String], stdout_file: Option<String>, stderr_file: Option<String>, append: bool , stderr_append: bool) -> Option<String> {
     if args.is_empty() {
@@ -58,20 +61,44 @@ pub fn handle_external_command(args: &[String], stdout_file: Option<String>, std
     }
 }
 
-pub fn handle_echo(args: &[String], output_file: Option<String> , append: bool) -> Option<String> {
-    let output = format!("{}\n", args.iter()
+pub fn handle_echo(args: &[String], writer: &mut dyn Write) {
+    let output = args.iter()
         .map(|a| a.trim_matches('\'').trim_matches('"'))
         .collect::<Vec<_>>()
-        .join(" "));
-    if let Some(path) = output_file {
-        if let Err(_) = utils::write_in_file(&path, &output, append) {
-            eprintln!("Error writing to file: {}", &path);
-            None
-        } else {
-            None
-        }
+        .join(" ");
+
+    if let Err(e) = writeln!(writer, "{}", output) {
+        eprintln!("Error writing echo: {}", e);
+    }
+}
+pub fn handle_type(args: &[String], writer: &mut dyn Write) {
+    if args.is_empty() {
+        return;
+    }
+    let target = &args[0];
+    let message = if ["exit", "echo", "type"].contains(&target.as_str()) {
+        format!("{} is a shell builtin\n", target)
+    } else if let Some(path) = find_executable(target) {
+        format!("{} is {}\n", target, path.display())
     } else {
-        Some(output)
+        format!("{}: not found\n", target)
+    };
+
+    let _ = write!(writer, "{}", message);
+}
+
+pub fn handle_execute_builtin_command(args: &[String]) -> Option<String> {
+    match args[0].as_str() {
+        "exit" => std::process::exit(0),
+        "echo" => {
+            handle_echo(&args[1..], &mut std::io::stdout());
+            None
+        },
+        "type" => {
+            handle_type(&args[1..], &mut std::io::stdout());
+            None
+        },
+        _ => None,
     }
 }
 
@@ -80,26 +107,39 @@ pub fn handle_pipe(left_cmd: &[String], right_cmd: &[String]) -> Option<String> 
         return None;
     }
 
-    let left_exe = find_executable(&left_cmd[0])?;
-    let right_exe = find_executable(&right_cmd[0])?;
+    let (reader, mut writer) = os_pipe::pipe().ok()?;
 
-    let mut left_child = Command::new(left_exe)
-        .args(&left_cmd[1..])
-        .stdout(Stdio::piped())
-        .spawn()
-        .ok()?;
+    if is_builtin_command(&left_cmd[0]) {
+        match left_cmd[0].as_str() {
+            "echo" => handle_echo(&left_cmd[1..], &mut writer),
+            "type" => handle_type(&left_cmd[1..], &mut writer),
+            _ => {}
+        }
+        drop(writer);
+    } else if let Some(exe) = find_executable(&left_cmd[0]) {
+        let mut left_child = Command::new(exe)
+            .args(&left_cmd[1..])
+            .stdout(writer)
+            .spawn()
+            .ok()?;
+    }
 
-    let left_stdout = left_child.stdout.take()?;
+    if is_builtin_command(&right_cmd[0]) {
+        let mut buffer = Vec::new();
+        use std::io::Read;
+        let _ = std::io::BufReader::new(reader).read_to_end(&mut buffer);
 
-    let mut right_child = Command::new(right_exe)
-        .args(&right_cmd[1..])
-        .stdin(Stdio::from(left_stdout))
-        .stdout(Stdio::inherit())
-        .spawn()
-        .ok()?;
-
-    let _ = left_child.wait();
-    let _ = right_child.wait();
+        handle_execute_builtin_command(right_cmd);
+    } else if let Some(exe) = find_executable(&right_cmd[0]) {
+        let mut right_child = Command::new(exe)
+            .args(&right_cmd[1..])
+            .stdin(reader)
+            .stdout(Stdio::inherit())
+            .spawn()
+            .ok()?;
+        
+        let _ = right_child.wait();
+    }
 
     None
 }
