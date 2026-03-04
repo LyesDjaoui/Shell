@@ -64,3 +64,12 @@ pub fn longest_common_prefix(strs: &[String]) -> String {
 pub fn is_builtin_command(cmd: &str) -> bool {
     matches!(cmd, "exit" | "echo" | "type")
 }
+
+pub fn get_file_writer(path: &str, append: bool) -> std::io::Result<std::fs::File> {
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .append(append)
+        .truncate(!append)
+        .open(path)
+}

@@ -1,6 +1,8 @@
 use std::process::{Command, Stdio};
 use crate::utils::find_executable;
 use crate::utils::is_builtin_command;
+use crate::utils::get_file_writer;
+use crate::utils;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::io::FromRawFd;
@@ -102,44 +104,56 @@ pub fn handle_execute_builtin_command(args: &[String]) -> Option<String> {
     }
 }
 
-pub fn handle_pipe(left_cmd: &[String], right_cmd: &[String]) -> Option<String> {
-    if left_cmd.is_empty() || right_cmd.is_empty() {
-        return None;
-    }
+pub fn handle_pipe(args: &[String], stdout_path: Option<String>, stderr_path: Option<String>,stdout_append: bool,stderr_append: bool) -> Option<String> {
+    let commands_blocks: Vec<Vec<String>> = args
+        .split(|s| s == "|")
+        .map(|m| m.to_vec())
+        .collect();
 
-    let (reader, mut writer) = os_pipe::pipe().ok()?;
+    let mut prev_reader: Option<os_pipe::PipeReader> = None;
+    let mut children = Vec::new();
 
-    if is_builtin_command(&left_cmd[0]) {
-        match left_cmd[0].as_str() {
-            "echo" => handle_echo(&left_cmd[1..], &mut writer),
-            "type" => handle_type(&left_cmd[1..], &mut writer),
-            _ => {}
+    for (i, cmd_args) in commands_blocks.iter().enumerate() {
+        let is_first = i == 0;
+        let is_last = i == commands_blocks.len() - 1;
+
+        let (reader, writer) = os_pipe::pipe().ok()?;
+
+        let stdin = if is_first {
+            Stdio::inherit()
+        } else {
+            Stdio::from(prev_reader.take().unwrap()) 
+        };
+
+        let stdout = if is_last {
+            if let Some(path) = &stdout_path {
+                Stdio::from(utils::get_file_writer(path, stdout_append).ok()?)
+            } else {
+                Stdio::inherit()
+            }
+        } else {
+            Stdio::from(writer)
+        };
+
+        if let Some(exe) = find_executable(&cmd_args[0]) {
+            let mut cmd = Command::new(exe);
+            cmd.args(&cmd_args[1..]).stdin(stdin).stdout(stdout);
+
+            if is_last {
+                if let Some(path) = &stderr_path {
+                    cmd.stderr(Stdio::from(get_file_writer(path, stderr_append).ok()?));
+                }
+            }
+
+            let child = cmd.spawn().ok()?;
+            children.push(child);
         }
-        drop(writer);
-    } else if let Some(exe) = find_executable(&left_cmd[0]) {
-        let mut left_child = Command::new(exe)
-            .args(&left_cmd[1..])
-            .stdout(writer)
-            .spawn()
-            .ok()?;
+
+        prev_reader = Some(reader);
     }
 
-    if is_builtin_command(&right_cmd[0]) {
-        let mut buffer = Vec::new();
-        use std::io::Read;
-        let _ = std::io::BufReader::new(reader).read_to_end(&mut buffer);
-
-        handle_execute_builtin_command(right_cmd);
-    } else if let Some(exe) = find_executable(&right_cmd[0]) {
-        let mut right_child = Command::new(exe)
-            .args(&right_cmd[1..])
-            .stdin(reader)
-            .stdout(Stdio::inherit())
-            .spawn()
-            .ok()?;
-        
-        let _ = right_child.wait();
+    for mut child in children {
+        let _ = child.wait();
     }
-
     None
 }
