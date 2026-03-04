@@ -1,12 +1,7 @@
 use std::process::{Command, Stdio};
-use crate::utils::find_executable;
-use crate::utils::is_builtin_command;
-use crate::utils::get_file_writer;
-use crate::utils;
-use std::fs::OpenOptions;
 use std::io::Write;
-use std::os::unix::io::FromRawFd;
-use std::fs::File;
+use std::fs::OpenOptions;
+use crate::utils::{find_executable, is_builtin_command, get_file_writer};
 
 pub fn handle_external_command(args: &[String], stdout_file: Option<String>, stderr_file: Option<String>, append: bool , stderr_append: bool) -> Option<String> {
     if args.is_empty() {
@@ -104,56 +99,106 @@ pub fn handle_execute_builtin_command(args: &[String]) -> Option<String> {
     }
 }
 
-pub fn handle_pipe(args: &[String], stdout_path: Option<String>, stderr_path: Option<String>,stdout_append: bool,stderr_append: bool) -> Option<String> {
-    let commands_blocks: Vec<Vec<String>> = args
+pub fn handle_pipe(
+    args: &[String],
+    stdout_path: Option<String>,
+    stderr_path: Option<String>,
+    stdout_append: bool,
+    stderr_append: bool,
+) -> Option<String> {
+    let blocks: Vec<Vec<String>> = args
         .split(|s| s == "|")
-        .map(|m| m.to_vec())
+        .map(|b| b.to_vec())
         .collect();
 
     let mut prev_reader: Option<os_pipe::PipeReader> = None;
-    let mut children = Vec::new();
+    let mut children: Vec<std::process::Child> = Vec::new();
 
-    for (i, cmd_args) in commands_blocks.iter().enumerate() {
-        let is_first = i == 0;
-        let is_last = i == commands_blocks.len() - 1;
+    for (i, cmd_args) in blocks.iter().enumerate() {
+        if cmd_args.is_empty() {
+            continue;
+        }
 
-        let (reader, writer) = os_pipe::pipe().ok()?;
+        let is_last = i == blocks.len() - 1;
 
-        let stdin = if is_first {
-            Stdio::inherit()
-        } else {
-            Stdio::from(prev_reader.take().unwrap()) 
-        };
-
-        let stdout = if is_last {
-            if let Some(path) = &stdout_path {
-                Stdio::from(utils::get_file_writer(path, stdout_append).ok()?)
+        let (current_stdout, next_reader) = if is_last {
+            let stdio = if let Some(path) = &stdout_path {
+                Stdio::from(get_file_writer(path, stdout_append).ok()?)
             } else {
                 Stdio::inherit()
-            }
+            };
+            (stdio, None)
         } else {
-            Stdio::from(writer)
+            let (r, w) = os_pipe::pipe().ok()?;
+            (Stdio::from(w), Some(r))
         };
+
+        let stdin = prev_reader.take().map(Stdio::from).unwrap_or(Stdio::inherit());
+
+        if is_builtin_command(&cmd_args[0]) {
+            let cmd_args = cmd_args.clone();
+
+            let (r, w) = os_pipe::pipe().ok()?;
+
+            std::thread::spawn(move || {
+                let mut writer = w;
+                match cmd_args[0].as_str() {
+                    "echo" => handle_echo(&cmd_args[1..], &mut writer),
+                    "type" => handle_type(&cmd_args[1..], &mut writer),
+                    _ => {}
+                }
+            });
+
+            if is_last {
+                let mut src = r;
+                if let Some(path) = &stdout_path {
+                    if let Ok(mut file) = get_file_writer(path, stdout_append) {
+                        std::io::copy(&mut src, &mut file).ok();
+                    }
+                } else {
+                    std::io::copy(&mut src, &mut std::io::stdout()).ok();
+                }
+            } else {
+                prev_reader = Some(r);
+            }
+
+            continue;
+        }
 
         if let Some(exe) = find_executable(&cmd_args[0]) {
             let mut cmd = Command::new(exe);
-            cmd.args(&cmd_args[1..]).stdin(stdin).stdout(stdout);
+            cmd.args(&cmd_args[1..])
+                .stdin(stdin)
+                .stdout(current_stdout);
 
             if is_last {
                 if let Some(path) = &stderr_path {
-                    cmd.stderr(Stdio::from(get_file_writer(path, stderr_append).ok()?));
+                    if let Ok(f) = get_file_writer(path, stderr_append) {
+                        cmd.stderr(Stdio::from(f));
+                    }
                 }
             }
 
-            let child = cmd.spawn().ok()?;
-            children.push(child);
+            if let Ok(child) = cmd.spawn() {
+                children.push(child);
+            } else {
+                eprintln!("{}: failed to spawn", cmd_args[0]);
+            }
+        } else {
+            eprintln!("{}: command not found", cmd_args[0]);
         }
 
-        prev_reader = Some(reader);
+        prev_reader = next_reader;
     }
+
+    drop(prev_reader);
 
     for mut child in children {
         let _ = child.wait();
     }
+
+    std::io::stdout().flush().ok();
+    std::io::stderr().flush().ok();
+
     None
 }

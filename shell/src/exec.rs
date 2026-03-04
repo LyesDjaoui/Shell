@@ -15,7 +15,7 @@ pub fn execute_command(args: &[String]) -> Option<String> {
             op = args[i].clone();
             if i + 1 < args.len() {
                 output_file = Some(args[i + 1].clone());
-                i += 2;
+                i += 2; 
             }else {
                 break;
             }
