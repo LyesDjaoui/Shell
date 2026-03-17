@@ -73,7 +73,7 @@ pub fn handle_type(args: &[String], writer: &mut dyn Write) {
         return;
     }
     let target = &args[0];
-    let message = if ["exit", "echo", "type"].contains(&target.as_str()) {
+    let message = if ["exit", "echo", "type" ,"history"].contains(&target.as_str()) {
         format!("{} is a shell builtin\n", target)
     } else if let Some(path) = find_executable(target) {
         format!("{} is {}\n", target, path.display())
@@ -82,6 +82,12 @@ pub fn handle_type(args: &[String], writer: &mut dyn Write) {
     };
 
     let _ = write!(writer, "{}", message);
+}
+
+pub fn handle_history(history : &[String]) {
+    for (index , command) in history.iter().enumerate() {
+        println!("{:5} {}",index+1,command);
+    }
 }
 
 pub fn handle_execute_builtin_command(args: &[String]) -> Option<String> {

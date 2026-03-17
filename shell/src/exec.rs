@@ -3,7 +3,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use crate::utils;
 
-pub fn execute_command(args: &[String]) -> Option<String> {
+pub fn execute_command(args: &[String] , history: &[String]) -> Option<String> {
     let mut output_file: Option<String> = None;
     let mut op = String::new();
     let mut clean_args = Vec::new();
@@ -40,6 +40,11 @@ pub fn execute_command(args: &[String]) -> Option<String> {
     match clean_args.as_slice() {
         [cmd] if cmd == "exit" => std::process::exit(0),
 
+        [cmd] if cmd == "history" => {
+            commands::handle_history(history);
+            None
+        }
+
         [cmd, rest @ ..] if cmd == "echo" || cmd == "type" => {
             if let Some(path) = &stderr_path {
                 let _ = utils::get_file_writer(path, stderr_append);
@@ -55,7 +60,7 @@ pub fn execute_command(args: &[String]) -> Option<String> {
                 }
             } else {
                 if cmd == "echo" { commands::handle_echo(rest, &mut std::io::stdout()); }
-                else { commands::handle_type(rest, &mut std::io::stdout()); }
+                else if cmd == "type" { commands::handle_type(rest, &mut std::io::stdout()); }
             }
             None
         }

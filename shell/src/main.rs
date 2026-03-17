@@ -105,6 +105,7 @@ fn tokenize(input: &str) -> Vec<String> {
 }
 
 fn main() -> rustyline::Result<()> {
+    let mut history : Vec<String> = Vec::new();
     let config = Config::builder().build();
 
     let mut rl: Editor<ShellCompleter, MemHistory> = 
@@ -122,12 +123,12 @@ fn main() -> rustyline::Result<()> {
                 if trimmed.is_empty() {
                     continue;
                 }
-
+                history.push(trimmed.to_string());
                 let _ = rl.add_history_entry(trimmed);
 
                 let args = tokenize(trimmed);
 
-                if let Some(output) = execute_command(&args) {
+                if let Some(output) = execute_command(&args , &history) {
                     print!("{}", output);
                     let _ = io::stdout().flush();
                 }else{
